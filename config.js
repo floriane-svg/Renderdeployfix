@@ -8,7 +8,12 @@ module.exports = {
     {
       name: 'Leblon',
       url: 'https://www.quintoandar.com.br/alugar/imovel/leblon-rio-de-janeiro-rj-brasil/de-500-a-3500-reais/apartamento/kitnet/1-quartos',
-      threshold: 5
+      threshold: 1
+    },
+    {
+      name: 'Rua Dias Ferreira 417 - Leblon',
+      url: 'https://www.quintoandar.com.br/alugar/imovel/rua-dias-ferreira-417-leblon-rio-de-janeiro-rj-brasil/de-500-a-3500-reais/apartamento/kitnet/1-quartos',
+      threshold: 1
     }
   ],
 
@@ -29,3 +34,4 @@ module.exports = {
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   ]
 };
+
