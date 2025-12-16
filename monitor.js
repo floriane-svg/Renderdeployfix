@@ -3,12 +3,11 @@ const { chromium } = require('playwright-core');
 const chromiumPkg = require('@sparticuz/chromium');
 const config = require('./config');
 
-const HARD_TIMEOUT = 45000;
-
 class Monitor {
-  constructor(token, chatId) {
-    this.telegramApi = `https://api.telegram.org/bot${token}/sendMessage`;
-    this.chatId = chatId;
+  constructor(telegramToken, telegramChatId) {
+    this.telegramToken = telegramToken;
+    this.telegramChatId = telegramChatId;
+    this.telegramApi = `https://api.telegram.org/bot${telegramToken}/sendMessage`;
     this.browser = null;
     this.context = null;
   }
@@ -18,95 +17,131 @@ class Monitor {
   }
 
   async ensureBrowser() {
-    if (this.browser?.isConnected()) return;
+    if (this.browser && this.browser.isConnected()) return this.browser;
+    this.log('🌐 Lancement Chromium...');
     this.browser = await chromium.launch({
       args: chromiumPkg.args,
       executablePath: await chromiumPkg.executablePath(),
       headless: true
     });
+    this.log('✅ Chromium prêt');
+    return this.browser;
   }
 
   async ensureContext() {
-    if (this.context) return;
-    await this.ensureBrowser();
-    this.context = await this.browser.newContext({
-      userAgent: this.randomUA(),
+    if (this.context) return this.context;
+    const browser = await this.ensureBrowser();
+    this.context = await browser.newContext({
+      viewport: { width: 1920, height: 1080 },
       locale: 'pt-BR',
-      timezoneId: 'America/Sao_Paulo'
+      timezoneId: 'America/Sao_Paulo',
+      userAgent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36'
     });
-
-    await this.context.route('**/*.{png,jpg,jpeg,svg,woff,woff2,ttf,mp4}', r => r.abort());
+    await this.context.route('**/*.{png,jpg,jpeg,gif,svg,webp}', r => r.abort());
+    await this.context.route('**/*.{woff,woff2,ttf,otf}', r => r.abort());
+    await this.context.route('**/*.{mp4,webm}', r => r.abort());
+    this.log('✅ Contexte prêt');
+    return this.context;
   }
 
-  randomUA() {
-    const uas = [
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_1) Safari/605.1.15',
-      'Mozilla/5.0 (X11; Linux x86_64) Chrome/120 Safari/537.36'
-    ];
-    return uas[Math.floor(Math.random() * uas.length)];
-  }
-
-  async hardTimeout(promise) {
-    return Promise.race([
-      promise,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('HARD TIMEOUT')), HARD_TIMEOUT)
-      )
-    ]);
-  }
-
-  async checkUrl({ name, url, threshold }) {
-    this.log(`🔍 ${name}`);
-    await this.ensureContext();
-    const page = await this.context.newPage();
-
+  async withPage(fn) {
+    const context = await this.ensureContext();
+    const page = await context.newPage();
     try {
-      await this.hardTimeout(page.goto(url, { waitUntil: 'domcontentloaded' }));
-      await page.waitForTimeout(2000);
-
-      const value = await page.evaluate(() => {
-        const c = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
-        if (!c) return null;
-        const nums = [...c.querySelectorAll('span')]
-          .map(s => parseInt(s.textContent))
-          .filter(n => !isNaN(n));
-        return nums.length ? Math.max(...nums) : null;
-      });
-
-      if (value === null) {
-        this.log(`⚠️ ${name} → valeur inconnue`);
-        return;
-      }
-
-      this.log(`📊 ${name} : ${value}`);
-
-      if (value >= threshold) {
-        await axios.post(this.telegramApi, {
-          chat_id: this.chatId,
-          parse_mode: 'HTML',
-          text: `🚨 <b>${name}</b>\n📊 ${value}\n<a href="${url}">Voir</a>`
-        });
-      }
-    } catch (e) {
-      this.log(`⚠️ SKIP ${name} (${e.message})`, 'warn');
+      return await fn(page);
+    } catch (err) {
+      this.log(`⚠️ Page skipped: ${err.message}`, 'warn');
+      return { value: 0, occurrences: 0 }; // continue même en cas de timeout
     } finally {
       await page.close().catch(() => {});
     }
   }
 
-  async runMonitoring() {
-    this.log('🏠 MONITORING START');
-    for (const u of config.urls) {
-      await this.checkUrl(u);
-      await new Promise(r => setTimeout(r, 3000));
+  async loadPage(page, url) {
+    this.log(`➡️ Chargement ${url}`);
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 40000 });
+      await page.waitForTimeout(1500);
+    } catch (err) {
+      this.log(`⚠️ Skip ${url} après timeout ou erreur: ${err.message}`, 'warn');
     }
-    this.log('✅ MONITORING DONE');
+  }
+
+  async extractSupply(page) {
+    try {
+      return await page.evaluate(() => {
+        const container = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
+        if (!container) return { value: 0, occurrences: 0 };
+        const spans = [...container.querySelectorAll('span')];
+        const numbers = spans
+          .map(s => s.textContent.trim())
+          .filter(t => /^\d+$/.test(t))
+          .map(Number);
+        if (!numbers.length) return { value: 0, occurrences: 0 };
+        return { value: Math.max(...numbers), occurrences: numbers.length };
+      });
+    } catch {
+      return { value: 0, occurrences: 0 };
+    }
+  }
+
+  async checkUrl(urlConfig) {
+    const { name, url, threshold = 1 } = urlConfig;
+    this.log(`\n🔍 ${name}`);
+    const result = await this.withPage(async page => {
+      await this.loadPage(page, url);
+      return await this.extractSupply(page);
+    });
+    this.log(`📊 Annonces détectées : ${result.value} (seuil ≥${threshold})`);
+    if (result.value >= threshold) {
+      await this.sendTelegram(
+        `🚨 <b>Alerte logement</b>\n\n📍 <b>${name}</b>\n📊 Annonces : <b>${result.value}</b>\n⚠️ Seuil : ≥${threshold}\n\n🔗 <a href="${url}">Voir</a>`
+      );
+    }
+  }
+
+  async sendTelegram(text) {
+    try {
+      await axios.post(this.telegramApi, { chat_id: this.telegramChatId, text, parse_mode: 'HTML' });
+      this.log('✉️ Telegram envoyé');
+    } catch (err) {
+      this.log(`❌ Erreur Telegram: ${err.message}`, 'error');
+    }
+  }
+
+  async sendStartup() {
+    const zones = config.urls
+      .map((u, i) => `${i + 1}. ${u.name} (≥${u.threshold ?? 1})`)
+      .join('\n');
+
+    await axios.post(this.telegramApi, {
+      chat_id: this.telegramChatId,
+      parse_mode: 'HTML',
+      text: `🚀 <b>Monitor démarré</b>\n\n🧠 Détection JS réelle (Playwright)\n\n` +
+            `📍 Zones surveillées:\n${zones}`
+    });
+
+    this.log('✉️ Telegram startup envoyé');
+  }
+
+  async runMonitoring() {
+    this.log('█'.repeat(50));
+    this.log('🏠 MONITORING QUINTOANDAR');
+    this.log('█'.repeat(50));
+
+    await Promise.all(config.urls.map(u => this.checkUrl(u)));
+
+    this.log('✅ Fin monitoring');
   }
 
   async shutdown() {
-    await this.context?.close();
-    await this.browser?.close();
+    try {
+      if (this.context) { await this.context.close(); this.context = null; this.log('🛑 Contexte fermé'); }
+      if (this.browser) { await this.browser.close(); this.browser = null; this.log('🛑 Navigateur fermé'); }
+    } catch (err) {
+      this.log(`❌ Erreur fermeture: ${err.message}`, 'error');
+    }
   }
 }
 
