@@ -15,32 +15,32 @@ module.exports = {
   ],
 
   /* ===========================
-     🔎 SUPPLY DETECTION (NEW)
+     🔎 SUPPLY DETECTION
+     (LOGIQUE COMPTEUR)
   =========================== */
 
   supplyDetection: {
-    // On cible le bloc exact qui contient le compteur
+    // Bloc EXACT qui contient le compteur
     containerSelector:
       'div[data-testid="CONTEXTUAL_SEARCH_TITLE"]',
 
-    // On extrait les <span> contenant des nombres
-    numberRegex: '\\b\\d+\\b',
+    // Regex pour extraire les <span>5</span>
+    spanNumberRegex:
+      '<span>\\s*(\\d+)\\s*</span>',
 
-    // Seuil d’alerte
+    // Valeur minimale pour déclencher une alerte
     minSupply: 1,
 
-    // Plage de valeurs plausibles
+    // Filtrage de sécurité (évite prix / codes / etc.)
     minValid: 1,
-    maxValid: 50
+    maxValid: 50,
+
+    // Stratégie : on prend la valeur MAX trouvée
+    strategy: 'max',
+
+    // Log : nombre d’occurrences trouvées
+    logOccurrences: true
   },
-
-  /* ===========================
-     🛡️ BACKUP CHECK (OPTIONNEL)
-     Phrase "aucun bien"
-  =========================== */
-
-  forbiddenSentence:
-    'Não temos imóveis disponíveis com todos esses critérios na região.',
 
   /* ===========================
      ⚙️ MONITORING
@@ -65,4 +65,3 @@ module.exports = {
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   ]
 };
-
