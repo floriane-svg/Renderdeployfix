@@ -60,26 +60,16 @@ class Monitor {
   }
 
   /* ===========================
-     PAGE LOAD (ANTI TIMEOUT + RETRY)
+     PAGE LOAD RAPIDE
   =========================== */
-  async loadPage(page, url, retries = 2) {
+  async loadPage(page, url) {
     this.log(`➡️ Chargement ${url}`);
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
-        await page.waitForTimeout(5000);
-        return;
-      } catch (err) {
-        if (attempt < retries) {
-          this.log(`⚠️ Retry ${attempt + 1} après erreur : ${err.message}`);
-          await this.sleep(5000 + Math.random() * 5000);
-        } else throw err;
-      }
-    }
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2000); // petit délai pour React/JS
   }
 
   /* ===========================
-     SUPPLY EXTRACTION (JS RÉEL)
+     SUPPLY EXTRACTION
   =========================== */
   async extractSupply(page) {
     return await page.evaluate(() => {
@@ -129,7 +119,6 @@ class Monitor {
       } else {
         this.log('ℹ️ Seuil non atteint');
       }
-
     } catch (err) {
       this.log(`❌ Erreur ${name}: ${err.message}`, 'error');
     }
@@ -168,7 +157,7 @@ class Monitor {
 
     for (const u of config.urls) {
       await this.checkUrl(u);
-      await this.sleep(5000 + Math.random() * 5000); // pause aléatoire entre URL
+      await this.sleep(1000); // pause minimale pour éviter chevauchement cron
     }
 
     this.log('✅ Fin monitoring');
