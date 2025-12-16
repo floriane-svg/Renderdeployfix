@@ -63,7 +63,9 @@ class Monitor {
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
       // Attendre que le container soit présent
-      await page.waitForSelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"] span', { timeout: 20000 });
+      await page.waitForSelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]', { timeout: 30000 });
+      // Petite pause pour laisser React injecter le <span>
+      await page.waitForTimeout(2000);
     } catch (err) {
       this.log(`⚠️ Skip ${url} après timeout ou erreur: ${err.message}`, 'warn');
     }
@@ -146,6 +148,8 @@ class Monitor {
     }
   }
 }
+
+module.exports = Monitor;
 
 module.exports = Monitor;
 
