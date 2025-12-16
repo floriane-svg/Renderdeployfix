@@ -16,32 +16,20 @@ class Monitor {
     console.log(`[${new Date().toISOString()}] [${level.toUpperCase()}] ${msg}`);
   }
 
-  // 🔹 Lancement Chromium avec retry ETXTBSY
-  async ensureBrowser(retries = 3) {
+  // 🔹 Lancement Chromium
+  async ensureBrowser() {
     if (this.browser && this.browser.isConnected()) return this.browser;
-
     this.log('🌐 Lancement Chromium...');
-    for (let attempt = 1; attempt <= retries; attempt++) {
-      try {
-        this.browser = await chromium.launch({
-          args: chromiumPkg.args,
-          executablePath: await chromiumPkg.executablePath(),
-          headless: true
-        });
-        this.log('✅ Chromium prêt');
-        return this.browser;
-      } catch (err) {
-        if (err.message.includes('ETXTBSY') && attempt < retries) {
-          this.log(`⚠️ ETXTBSY détecté, réessai ${attempt}/${retries}...`, 'warn');
-          await new Promise(r => setTimeout(r, 1000));
-        } else {
-          throw err;
-        }
-      }
-    }
+    this.browser = await chromium.launch({
+      args: chromiumPkg.args,
+      executablePath: await chromiumPkg.executablePath(),
+      headless: true
+    });
+    this.log('✅ Chromium prêt');
+    return this.browser;
   }
 
-  // 🔹 Contexte rapide
+  // 🔹 Contexte
   async ensureContext() {
     if (this.context) return this.context;
     const browser = await this.ensureBrowser();
@@ -51,6 +39,7 @@ class Monitor {
       timezoneId: 'America/Sao_Paulo',
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36'
     });
+    // Bloque images, fonts, vidéos pour aller plus vite
     await this.context.route('**/*.{png,jpg,jpeg,gif,svg,webp}', r => r.abort());
     await this.context.route('**/*.{woff,woff2,ttf,otf}', r => r.abort());
     await this.context.route('**/*.{mp4,webm}', r => r.abort());
@@ -58,7 +47,7 @@ class Monitor {
     return this.context;
   }
 
-  // 🔹 Page avec timeout et extraction fiable
+  // 🔹 Exécution d'une page avec timeout global
   async withPage(fn, pageTimeout = 30000) {
     const context = await this.ensureContext();
     const page = await context.newPage();
@@ -79,33 +68,45 @@ class Monitor {
     }
   }
 
-  // 🔹 Chargement rapide de la page
+  // 🔹 Chargement rapide + polling
   async loadPage(page, url) {
     this.log(`➡️ Chargement ${url}`);
     try {
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-      await page.waitForSelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]', { timeout: 20000, state: 'attached' });
-      await page.waitForTimeout(500); // très courte pause pour React
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+
+      // Polling rapide pour React
+      const start = Date.now();
+      let container = null;
+      while (Date.now() - start < 10000) { // max 10s
+        container = await page.$('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
+        if (container) {
+          const text = await container.textContent();
+          if (text && text.trim().length > 0) break;
+        }
+        await page.waitForTimeout(200); // retry rapide
+      }
+
+      await page.waitForTimeout(300); // petite pause pour stabilité
     } catch (err) {
       this.log(`⚠️ Skip ${url} après timeout ou erreur: ${err.message}`, 'warn');
     }
   }
 
-  // 🔹 Extraction instantanée du nombre d’annonces
+  // 🔹 Extraction réactive
   async extractSupply(page) {
     try {
       return await page.evaluate(() => {
         const container = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
         if (!container) return { value: 0, occurrences: 0 };
+
+        const text = container.textContent || '';
+
+        // 0 annonces
+        if (text.includes('= $0') && text.includes('Imóveis')) return { value: 0, occurrences: 1 };
+
+        // ≥1 annonces
         const span = container.querySelector('span');
-        if (!span) {
-          // Cas "0 annonces" détecté par parent différent
-          const textContent = container.textContent || '';
-          const matchZero = textContent.match(/= \$0/);
-          if (matchZero) return { value: 0, occurrences: 1 };
-          return { value: 0, occurrences: 0 };
-        }
-        const number = parseInt(span.textContent.trim(), 10);
+        const number = span ? parseInt(span.textContent.trim(), 10) : 0;
         return isNaN(number) ? { value: 0, occurrences: 0 } : { value: number, occurrences: 1 };
       });
     } catch {
@@ -120,7 +121,7 @@ class Monitor {
     const result = await this.withPage(async page => {
       await this.loadPage(page, url);
       return await this.extractSupply(page);
-    }, 30000);
+    }, 30000); // 30s max par page
 
     this.log(`📊 Annonces détectées : ${result.value} (seuil ≥${threshold})`);
     if (result.value >= threshold) {
@@ -130,7 +131,7 @@ class Monitor {
     }
   }
 
-  // 🔹 Telegram
+  // 🔹 Envoi Telegram
   async sendTelegram(text) {
     try {
       await axios.post(this.telegramApi, { chat_id: this.telegramChatId, text, parse_mode: 'HTML' });
@@ -140,14 +141,18 @@ class Monitor {
     }
   }
 
-  // 🔹 Startup
+  // 🔹 Startup message
   async sendStartup() {
-    const zones = config.urls.map((u, i) => `${i + 1}. ${u.name} (≥${u.threshold ?? 1})`).join('\n');
+    const zones = config.urls
+      .map((u, i) => `${i + 1}. ${u.name} (≥${u.threshold ?? 1})`)
+      .join('\n');
+
     try {
       await axios.post(this.telegramApi, {
         chat_id: this.telegramChatId,
         parse_mode: 'HTML',
-        text: `🚀 <b>Monitor démarré</b>\n\n🧠 Détection JS réelle (Playwright)\n\n📍 Zones surveillées:\n${zones}`
+        text: `🚀 <b>Monitor démarré</b>\n\n🧠 Détection JS réelle (Playwright)\n\n` +
+              `📍 Zones surveillées:\n${zones}`
       });
       this.log('✉️ Telegram startup envoyé');
     } catch (err) {
@@ -162,7 +167,7 @@ class Monitor {
     this.log('█'.repeat(50));
 
     for (const u of config.urls) {
-      await this.checkUrl(u);
+      await this.checkUrl(u); // séquentiel pour éviter blocage
     }
 
     this.log('✅ Fin monitoring');
