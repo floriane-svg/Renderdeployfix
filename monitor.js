@@ -16,6 +16,7 @@ class Monitor {
     console.log(`[${new Date().toISOString()}] [${level.toUpperCase()}] ${msg}`);
   }
 
+  // 🔹 Assure que le navigateur est lancé
   async ensureBrowser() {
     if (this.browser && this.browser.isConnected()) return this.browser;
     this.log('🌐 Lancement Chromium...');
@@ -28,6 +29,7 @@ class Monitor {
     return this.browser;
   }
 
+  // 🔹 Assure que le contexte est prêt
   async ensureContext() {
     if (this.context) return this.context;
     const browser = await this.ensureBrowser();
@@ -35,9 +37,9 @@ class Monitor {
       viewport: { width: 1920, height: 1080 },
       locale: 'pt-BR',
       timezoneId: 'America/Sao_Paulo',
-      userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36'
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36'
     });
+    // Bloque images, fonts, vidéos pour aller plus vite
     await this.context.route('**/*.{png,jpg,jpeg,gif,svg,webp}', r => r.abort());
     await this.context.route('**/*.{woff,woff2,ttf,otf}', r => r.abort());
     await this.context.route('**/*.{mp4,webm}', r => r.abort());
@@ -45,11 +47,19 @@ class Monitor {
     return this.context;
   }
 
-  async withPage(fn) {
+  // 🔹 Exécution d'une page avec timeout global pour éviter blocage
+  async withPage(fn, pageTimeout = 30000) {
     const context = await this.ensureContext();
     const page = await context.newPage();
+
     try {
-      return await fn(page);
+      return await Promise.race([
+        fn(page),
+        new Promise(resolve => setTimeout(() => {
+          this.log('⏱️ Page timeout dépassé, on continue', 'warn');
+          resolve({ value: 0, occurrences: 0 });
+        }, pageTimeout))
+      ]);
     } catch (err) {
       this.log(`⚠️ Page skipped: ${err.message}`, 'warn');
       return { value: 0, occurrences: 0 };
@@ -58,40 +68,44 @@ class Monitor {
     }
   }
 
+  // 🔹 Chargement rapide de la page avec timeout court
   async loadPage(page, url) {
     this.log(`➡️ Chargement ${url}`);
     try {
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 40000 });
-      // Laisser React injecter le DOM
-      await page.waitForTimeout(2000);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }); // 20s max
+      await page.waitForSelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]', { timeout: 10000, state: 'attached' }); // 10s max
+      await page.waitForTimeout(1000); // courte pause pour React
     } catch (err) {
       this.log(`⚠️ Skip ${url} après timeout ou erreur: ${err.message}`, 'warn');
     }
   }
 
+  // 🔹 Extraction du chiffre dans le <span>
   async extractSupply(page) {
     try {
-      const numbers = await page.$$eval(
-        'div[data-testid="CONTEXTUAL_SEARCH_TITLE"] span',
-        spans =>
-          spans
-            .map(s => parseInt(s.textContent.trim(), 10))
-            .filter(n => !isNaN(n))
-      );
-      if (!numbers.length) return { value: 0, occurrences: 0 };
-      return { value: Math.max(...numbers), occurrences: numbers.length };
+      return await page.evaluate(() => {
+        const container = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
+        if (!container) return { value: 0, occurrences: 0 };
+        const span = container.querySelector('span');
+        if (!span) return { value: 0, occurrences: 0 };
+        const number = parseInt(span.textContent.trim(), 10);
+        if (isNaN(number)) return { value: 0, occurrences: 0 };
+        return { value: number, occurrences: 1 };
+      });
     } catch {
       return { value: 0, occurrences: 0 };
     }
   }
 
+  // 🔹 Vérification d'une URL
   async checkUrl(urlConfig) {
     const { name, url, threshold = 1 } = urlConfig;
     this.log(`\n🔍 ${name}`);
     const result = await this.withPage(async page => {
       await this.loadPage(page, url);
       return await this.extractSupply(page);
-    });
+    }, 30000); // 30s max par page
+
     this.log(`📊 Annonces détectées : ${result.value} (seuil ≥${threshold})`);
     if (result.value >= threshold) {
       await this.sendTelegram(
@@ -100,6 +114,7 @@ class Monitor {
     }
   }
 
+  // 🔹 Envoi Telegram
   async sendTelegram(text) {
     try {
       await axios.post(this.telegramApi, { chat_id: this.telegramChatId, text, parse_mode: 'HTML' });
@@ -109,33 +124,39 @@ class Monitor {
     }
   }
 
+  // 🔹 Message de démarrage
   async sendStartup() {
     const zones = config.urls
       .map((u, i) => `${i + 1}. ${u.name} (≥${u.threshold ?? 1})`)
       .join('\n');
 
-    await axios.post(this.telegramApi, {
-      chat_id: this.telegramChatId,
-      parse_mode: 'HTML',
-      text: `🚀 <b>Monitor démarré</b>\n\n🧠 Détection JS réelle (Playwright)\n\n` +
-            `📍 Zones surveillées:\n${zones}`
-    });
-
-    this.log('✉️ Telegram startup envoyé');
+    try {
+      await axios.post(this.telegramApi, {
+        chat_id: this.telegramChatId,
+        parse_mode: 'HTML',
+        text: `🚀 <b>Monitor démarré</b>\n\n🧠 Détection JS réelle (Playwright)\n\n` +
+              `📍 Zones surveillées:\n${zones}`
+      });
+      this.log('✉️ Telegram startup envoyé');
+    } catch (err) {
+      this.log(`❌ Erreur Telegram startup: ${err.message}`, 'error');
+    }
   }
 
+  // 🔹 Boucle monitoring
   async runMonitoring() {
     this.log('█'.repeat(50));
     this.log('🏠 MONITORING QUINTOANDAR');
     this.log('█'.repeat(50));
 
     for (const u of config.urls) {
-      await this.checkUrl(u);
+      await this.checkUrl(u); // on fait chaque URL séquentiellement pour ne pas bloquer
     }
 
     this.log('✅ Fin monitoring');
   }
 
+  // 🔹 Fermeture
   async shutdown() {
     try {
       if (this.context) { await this.context.close(); this.context = null; this.log('🛑 Contexte fermé'); }
