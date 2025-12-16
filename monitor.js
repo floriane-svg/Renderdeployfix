@@ -61,9 +61,12 @@ class Monitor {
   async loadPage(page, url) {
     this.log(`➡️ Chargement ${url}`);
     try {
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      // Attendre explicitement que le compteur apparaisse
-      await page.waitForSelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"] span', { timeout: 15000 });
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
+      // Attendre que le texte du compteur contienne un chiffre
+      await page.waitForFunction(() => {
+        const container = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
+        return container && /\d+/.test(container.textContent);
+      }, { timeout: 20000 });
     } catch (err) {
       this.log(`⚠️ Skip ${url} après timeout ou erreur: ${err.message}`, 'warn');
     }
@@ -72,14 +75,13 @@ class Monitor {
   async extractSupply(page) {
     try {
       return await page.evaluate(() => {
-        const span = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"] span');
-        if (!span) return { value: 0, occurrences: 0 };
+        const container = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
+        if (!container) return { value: 0, occurrences: 0 };
 
-        const text = span.textContent.trim();
-        const number = parseInt(text, 10);
+        const match = container.textContent.match(/\d+/);
+        if (!match) return { value: 0, occurrences: 0 };
 
-        if (isNaN(number)) return { value: 0, occurrences: 0 };
-        return { value: number, occurrences: 1 };
+        return { value: parseInt(match[0], 10), occurrences: 1 };
       });
     } catch {
       return { value: 0, occurrences: 0 };
@@ -146,4 +148,3 @@ class Monitor {
 }
 
 module.exports = Monitor;
-
