@@ -16,29 +16,29 @@ module.exports = {
 
   /* ===========================
      🔎 SUPPLY DETECTION
-     (LOGIQUE COMPTEUR)
   =========================== */
 
   supplyDetection: {
-    // Bloc EXACT qui contient le compteur
+    // Bloc qui contient le compteur
     containerSelector:
       'div[data-testid="CONTEXTUAL_SEARCH_TITLE"]',
 
-    // Regex pour extraire les <span>5</span>
+    // Extraction des chiffres dans <span>
     spanNumberRegex:
       '<span>\\s*(\\d+)\\s*</span>',
 
-    // Valeur minimale pour déclencher une alerte
+    // 🔥 SEUIL GLOBAL
+    // Dès qu’un "1" apparaît → alerte
     minSupply: 1,
 
-    // Filtrage de sécurité (évite prix / codes / etc.)
+    // Sécurité (évite prix, ids, etc.)
     minValid: 1,
     maxValid: 50,
 
-    // Stratégie : on prend la valeur MAX trouvée
+    // On prend la valeur la plus haute trouvée
     strategy: 'max',
 
-    // Log : nombre d’occurrences trouvées
+    // Logs détaillés
     logOccurrences: true
   },
 
