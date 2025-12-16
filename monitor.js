@@ -8,8 +8,8 @@ class Monitor {
     this.telegramToken = telegramToken;
     this.telegramChatId = telegramChatId;
     this.telegramApi = `https://api.telegram.org/bot${telegramToken}/sendMessage`;
-    this.browser = null;
-    this.context = null;
+    this.browser = null;   // Chromium pré-chrome
+    this.context = null;   // Contexte pré-chrome
   }
 
   log(msg, level = 'info') {
@@ -17,7 +17,7 @@ class Monitor {
   }
 
   /* ===========================
-     BROWSER
+     BROWSER (Pré-chrome)
   =========================== */
   async ensureBrowser() {
     if (this.browser && this.browser.isConnected()) return this.browser;
@@ -29,7 +29,7 @@ class Monitor {
       headless: true
     });
 
-    this.log('✅ Chromium prêt');
+    this.log('✅ Chromium prêt (pré-chrome)');
     return this.browser;
   }
 
@@ -45,7 +45,7 @@ class Monitor {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36'
     });
 
-    this.log('✅ Context prêt');
+    this.log('✅ Contexte prêt (pré-chrome)');
     return this.context;
   }
 
@@ -139,7 +139,7 @@ class Monitor {
   async sendStartup() {
     await this.sendTelegram(
       `🚀 <b>Monitor démarré</b>\n\n` +
-      `🧠 Détection JS réelle (Playwright)\n\n` +
+      `🧠 Détection JS réelle (Playwright pré-chrome)\n\n` +
       `📍 Zones surveillées:\n` +
       config.urls
         .map((u, i) => `${i + 1}. ${u.name} (≥${u.threshold ?? 1})`)
@@ -155,6 +155,7 @@ class Monitor {
     this.log('🏠 MONITORING QUINTOANDAR');
     this.log('█'.repeat(50));
 
+    // Les checks rapides mais stables
     for (const u of config.urls) {
       await this.checkUrl(u);
       await this.sleep(1000); // pause minimale pour éviter chevauchement cron
