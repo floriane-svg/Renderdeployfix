@@ -45,6 +45,10 @@ class Monitor {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36'
     });
 
+    // Bloquer images et polices pour accélérer
+    await this.context.route('**/*.{png,jpg,jpeg,gif,svg,webp}', route => route.abort());
+    await this.context.route('**/*.{woff,woff2,ttf}', route => route.abort());
+
     this.log('✅ Contexte prêt');
     return this.context;
   }
@@ -65,11 +69,11 @@ class Monitor {
   async loadPage(page, url) {
     this.log(`➡️ Chargement ${url}`);
     try {
-      await page.goto(url, { waitUntil: 'networkidle', timeout: 120000 });
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
       await page.waitForTimeout(2000);
     } catch (err) {
-      this.log(`❌ Timeout ou erreur sur ${url}: ${err.message}`, 'error');
-      throw err;
+      this.log(`⚠️ Timeout ou erreur sur ${url}: ${err.message}`, 'warn');
+      // On continue quand même, extraction possible
     }
   }
 
