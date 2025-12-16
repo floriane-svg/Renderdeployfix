@@ -16,18 +16,32 @@ class Monitor {
     console.log(`[${new Date().toISOString()}] [${level.toUpperCase()}] ${msg}`);
   }
 
-  async ensureBrowser() {
+  // 🔹 Assure que le navigateur est lancé
+  async ensureBrowser(retries = 3) {
     if (this.browser && this.browser.isConnected()) return this.browser;
+
     this.log('🌐 Lancement Chromium...');
-    this.browser = await chromium.launch({
-      args: chromiumPkg.args,
-      executablePath: await chromiumPkg.executablePath(),
-      headless: true
-    });
-    this.log('✅ Chromium prêt');
-    return this.browser;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        this.browser = await chromium.launch({
+          args: chromiumPkg.args,
+          executablePath: await chromiumPkg.executablePath(),
+          headless: true
+        });
+        this.log('✅ Chromium prêt');
+        return this.browser;
+      } catch (err) {
+        if (err.message.includes('ETXTBSY') && attempt < retries) {
+          this.log(`⚠️ ETXTBSY détecté, réessai ${attempt}/${retries}...`, 'warn');
+          await new Promise(r => setTimeout(r, 1000));
+        } else {
+          throw err;
+        }
+      }
+    }
   }
 
+  // 🔹 Assure que le contexte est prêt
   async ensureContext() {
     if (this.context) return this.context;
     const browser = await this.ensureBrowser();
@@ -45,6 +59,7 @@ class Monitor {
     return this.context;
   }
 
+  // 🔹 Exécution d'une page avec timeout global pour éviter blocage
   async withPage(fn, pageTimeout = 30000) {
     const context = await this.ensureContext();
     const page = await context.newPage();
@@ -65,36 +80,27 @@ class Monitor {
     }
   }
 
+  // 🔹 Chargement rapide de la page avec timeout court
   async loadPage(page, url) {
     this.log(`➡️ Chargement ${url}`);
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-      // Poll rapide pour détecter le div même si React met du temps à afficher
-      await page.waitForSelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]', { timeout: 20000, state: 'attached' });
+      await page.waitForSelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]', { timeout: 15000, state: 'attached' });
+      await page.waitForTimeout(1000); // courte pause pour React
     } catch (err) {
       this.log(`⚠️ Skip ${url} après timeout ou erreur: ${err.message}`, 'warn');
     }
   }
 
+  // 🔹 Extraction du chiffre dans le <span>
   async extractSupply(page) {
     try {
-      return await page.evaluate(async () => {
+      return await page.evaluate(() => {
         const container = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
         if (!container) return { value: 0, occurrences: 0 };
-
         const span = container.querySelector('span');
         if (!span) return { value: 0, occurrences: 0 };
-
-        // ✅ Polling ultra rapide pour obtenir la valeur exacte affichée
-        let lastValue = span.textContent.trim();
-        for (let i = 0; i < 10; i++) { // max 5s (500ms x 10)
-          await new Promise(r => setTimeout(r, 500));
-          const current = span.textContent.trim();
-          if (current === lastValue && current.length > 0) break;
-          lastValue = current;
-        }
-
-        const number = parseInt(lastValue.replace(/\D/g, ''), 10); // prend que les chiffres
+        const number = parseInt(span.textContent.trim(), 10);
         if (isNaN(number)) return { value: 0, occurrences: 0 };
         return { value: number, occurrences: 1 };
       });
@@ -103,6 +109,7 @@ class Monitor {
     }
   }
 
+  // 🔹 Vérification d'une URL
   async checkUrl(urlConfig) {
     const { name, url, threshold = 1 } = urlConfig;
     this.log(`\n🔍 ${name}`);
@@ -119,6 +126,7 @@ class Monitor {
     }
   }
 
+  // 🔹 Envoi Telegram
   async sendTelegram(text) {
     try {
       await axios.post(this.telegramApi, { chat_id: this.telegramChatId, text, parse_mode: 'HTML' });
@@ -128,6 +136,7 @@ class Monitor {
     }
   }
 
+  // 🔹 Message de démarrage
   async sendStartup() {
     const zones = config.urls
       .map((u, i) => `${i + 1}. ${u.name} (≥${u.threshold ?? 1})`)
@@ -146,6 +155,7 @@ class Monitor {
     }
   }
 
+  // 🔹 Boucle monitoring
   async runMonitoring() {
     this.log('█'.repeat(50));
     this.log('🏠 MONITORING QUINTOANDAR');
@@ -158,6 +168,7 @@ class Monitor {
     this.log('✅ Fin monitoring');
   }
 
+  // 🔹 Fermeture
   async shutdown() {
     try {
       if (this.context) { await this.context.close(); this.context = null; this.log('🛑 Contexte fermé'); }
