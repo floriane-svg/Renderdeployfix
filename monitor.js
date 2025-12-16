@@ -61,10 +61,8 @@ class Monitor {
   async loadPage(page, url) {
     this.log(`➡️ Chargement ${url}`);
     try {
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
-      // Attendre que le container soit présent dans le DOM (pas besoin qu'il soit visible)
-      await page.waitForSelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]', { timeout: 30000, state: 'attached' });
-      // Petite pause pour laisser React injecter le <span>
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 40000 });
+      // Laisser React injecter le DOM
       await page.waitForTimeout(2000);
     } catch (err) {
       this.log(`⚠️ Skip ${url} après timeout ou erreur: ${err.message}`, 'warn');
@@ -73,18 +71,15 @@ class Monitor {
 
   async extractSupply(page) {
     try {
-      return await page.evaluate(() => {
-        const container = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
-        if (!container) return { value: 0, occurrences: 0 };
-
-        const span = container.querySelector('span');
-        if (!span) return { value: 0, occurrences: 0 };
-
-        const number = parseInt(span.textContent.trim(), 10);
-        if (isNaN(number)) return { value: 0, occurrences: 0 };
-
-        return { value: number, occurrences: 1 };
-      });
+      const numbers = await page.$$eval(
+        'div[data-testid="CONTEXTUAL_SEARCH_TITLE"] span',
+        spans =>
+          spans
+            .map(s => parseInt(s.textContent.trim(), 10))
+            .filter(n => !isNaN(n))
+      );
+      if (!numbers.length) return { value: 0, occurrences: 0 };
+      return { value: Math.max(...numbers), occurrences: numbers.length };
     } catch {
       return { value: 0, occurrences: 0 };
     }
@@ -134,7 +129,9 @@ class Monitor {
     this.log('🏠 MONITORING QUINTOANDAR');
     this.log('█'.repeat(50));
 
-    await Promise.all(config.urls.map(u => this.checkUrl(u)));
+    for (const u of config.urls) {
+      await this.checkUrl(u);
+    }
 
     this.log('✅ Fin monitoring');
   }
