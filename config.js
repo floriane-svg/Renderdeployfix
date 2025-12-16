@@ -14,9 +14,37 @@ module.exports = {
     }
   ],
 
-  // 🔥 Phrase à détecter (si ABSENTE → alerte)
+  /* ===========================
+     🔎 SUPPLY DETECTION (NEW)
+  =========================== */
+
+  supplyDetection: {
+    // On cible le bloc exact qui contient le compteur
+    containerSelector:
+      'div[data-testid="CONTEXTUAL_SEARCH_TITLE"]',
+
+    // On extrait les <span> contenant des nombres
+    numberRegex: '\\b\\d+\\b',
+
+    // Seuil d’alerte
+    minSupply: 1,
+
+    // Plage de valeurs plausibles
+    minValid: 1,
+    maxValid: 50
+  },
+
+  /* ===========================
+     🛡️ BACKUP CHECK (OPTIONNEL)
+     Phrase "aucun bien"
+  =========================== */
+
   forbiddenSentence:
     'Não temos imóveis disponíveis com todos esses critérios na região.',
+
+  /* ===========================
+     ⚙️ MONITORING
+  =========================== */
 
   monitoring: {
     maxRetries: 3,
@@ -24,6 +52,10 @@ module.exports = {
     pageTimeout: 30000,
     waitAfterLoad: 3000
   },
+
+  /* ===========================
+     🧠 USER AGENTS
+  =========================== */
 
   userAgents: [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
