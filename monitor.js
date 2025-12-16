@@ -16,7 +16,7 @@ class Monitor {
     console.log(`[${new Date().toISOString()}] [${level.toUpperCase()}] ${msg}`);
   }
 
-  // 🔹 Lancement Chromium
+  // 🔹 Assure que le navigateur est lancé
   async ensureBrowser() {
     if (this.browser && this.browser.isConnected()) return this.browser;
     this.log('🌐 Lancement Chromium...');
@@ -29,7 +29,7 @@ class Monitor {
     return this.browser;
   }
 
-  // 🔹 Contexte
+  // 🔹 Assure que le contexte est prêt
   async ensureContext() {
     if (this.context) return this.context;
     const browser = await this.ensureBrowser();
@@ -47,7 +47,7 @@ class Monitor {
     return this.context;
   }
 
-  // 🔹 Exécution d'une page avec timeout global
+  // 🔹 Exécution d'une page avec timeout global pour éviter blocage
   async withPage(fn, pageTimeout = 30000) {
     const context = await this.ensureContext();
     const page = await context.newPage();
@@ -68,53 +68,36 @@ class Monitor {
     }
   }
 
-  // 🔹 Chargement rapide + polling
+  // 🔹 Chargement rapide de la page avec timeout court
   async loadPage(page, url) {
     this.log(`➡️ Chargement ${url}`);
     try {
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
-
-      // Polling rapide pour React
-      const start = Date.now();
-      let container = null;
-      while (Date.now() - start < 10000) { // max 10s
-        container = await page.$('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
-        if (container) {
-          const text = await container.textContent();
-          if (text && text.trim().length > 0) break;
-        }
-        await page.waitForTimeout(200); // retry rapide
-      }
-
-      await page.waitForTimeout(300); // petite pause pour stabilité
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }); // 20s max
+      await page.waitForSelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]', { timeout: 15000, state: 'attached' }); // 15s max
+      await page.waitForTimeout(1000); // courte pause pour React
     } catch (err) {
       this.log(`⚠️ Skip ${url} après timeout ou erreur: ${err.message}`, 'warn');
     }
   }
 
-  // 🔹 Extraction réactive
+  // 🔹 Extraction du chiffre dans le <span>
   async extractSupply(page) {
     try {
       return await page.evaluate(() => {
         const container = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
         if (!container) return { value: 0, occurrences: 0 };
-
-        const text = container.textContent || '';
-
-        // 0 annonces
-        if (text.includes('= $0') && text.includes('Imóveis')) return { value: 0, occurrences: 1 };
-
-        // ≥1 annonces
         const span = container.querySelector('span');
-        const number = span ? parseInt(span.textContent.trim(), 10) : 0;
-        return isNaN(number) ? { value: 0, occurrences: 0 } : { value: number, occurrences: 1 };
+        if (!span) return { value: 0, occurrences: 0 };
+        const number = parseInt(span.textContent.trim(), 10);
+        if (isNaN(number)) return { value: 0, occurrences: 0 };
+        return { value: number, occurrences: 1 };
       });
     } catch {
       return { value: 0, occurrences: 0 };
     }
   }
 
-  // 🔹 Vérification URL
+  // 🔹 Vérification d'une URL
   async checkUrl(urlConfig) {
     const { name, url, threshold = 1 } = urlConfig;
     this.log(`\n🔍 ${name}`);
@@ -141,7 +124,7 @@ class Monitor {
     }
   }
 
-  // 🔹 Startup message
+  // 🔹 Message de démarrage
   async sendStartup() {
     const zones = config.urls
       .map((u, i) => `${i + 1}. ${u.name} (≥${u.threshold ?? 1})`)
@@ -167,7 +150,7 @@ class Monitor {
     this.log('█'.repeat(50));
 
     for (const u of config.urls) {
-      await this.checkUrl(u); // séquentiel pour éviter blocage
+      await this.checkUrl(u); // on fait chaque URL séquentiellement pour ne pas bloquer
     }
 
     this.log('✅ Fin monitoring');
