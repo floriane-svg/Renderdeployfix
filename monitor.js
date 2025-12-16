@@ -17,7 +17,7 @@ class Monitor {
   }
 
   /* ===========================
-     BROWSER
+     BROWSER + CONTEXT
   =========================== */
   async ensureBrowser() {
     if (this.browser && this.browser.isConnected()) return this.browser;
@@ -45,9 +45,10 @@ class Monitor {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36'
     });
 
-    // Bloquer images et polices pour accélérer
+    // Bloquer ressources inutiles pour aller plus vite
     await this.context.route('**/*.{png,jpg,jpeg,gif,svg,webp}', route => route.abort());
-    await this.context.route('**/*.{woff,woff2,ttf}', route => route.abort());
+    await this.context.route('**/*.{woff,woff2,ttf,otf}', route => route.abort());
+    await this.context.route('**/*.{mp4,webm}', route => route.abort());
 
     this.log('✅ Contexte prêt');
     return this.context;
@@ -64,16 +65,15 @@ class Monitor {
   }
 
   /* ===========================
-     PAGE LOAD
+     PAGE LOAD RAPIDE ET SAFE
   =========================== */
   async loadPage(page, url) {
     this.log(`➡️ Chargement ${url}`);
     try {
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      await page.waitForTimeout(2000);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 40000 });
+      await page.waitForTimeout(1500); // JS léger pour React/API
     } catch (err) {
-      this.log(`⚠️ Timeout ou erreur sur ${url}: ${err.message}`, 'warn');
-      // On continue quand même, extraction possible
+      this.log(`⚠️ Skip ${url} après timeout ou erreur: ${err.message}`, 'warn');
     }
   }
 
@@ -82,9 +82,7 @@ class Monitor {
   =========================== */
   async extractSupply(page) {
     return await page.evaluate(() => {
-      const container = document.querySelector(
-        'div[data-testid="CONTEXTUAL_SEARCH_TITLE"]'
-      );
+      const container = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
       if (!container) return { value: 0, occurrences: 0 };
 
       const spans = [...container.querySelectorAll('span')];
@@ -95,10 +93,7 @@ class Monitor {
 
       if (!numbers.length) return { value: 0, occurrences: 0 };
 
-      return {
-        value: Math.max(...numbers),
-        occurrences: numbers.length
-      };
+      return { value: Math.max(...numbers), occurrences: numbers.length };
     });
   }
 
@@ -138,11 +133,7 @@ class Monitor {
   =========================== */
   async sendTelegram(text) {
     try {
-      await axios.post(this.telegramApi, {
-        chat_id: this.telegramChatId,
-        text,
-        parse_mode: 'HTML'
-      });
+      await axios.post(this.telegramApi, { chat_id: this.telegramChatId, text, parse_mode: 'HTML' });
       this.log('✉️ Telegram envoyé');
     } catch (err) {
       this.log(`❌ Erreur Telegram: ${err.message}`, 'error');
@@ -154,9 +145,7 @@ class Monitor {
       `🚀 <b>Monitor démarré</b>\n\n` +
       `🧠 Détection JS réelle (Playwright)\n\n` +
       `📍 Zones surveillées:\n` +
-      config.urls
-        .map((u, i) => `${i + 1}. ${u.name} (≥${u.threshold ?? 1})`)
-        .join('\n')
+      config.urls.map((u, i) => `${i + 1}. ${u.name} (≥${u.threshold ?? 1})`).join('\n')
     );
   }
 
@@ -168,14 +157,21 @@ class Monitor {
     this.log('🏠 MONITORING QUINTOANDAR');
     this.log('█'.repeat(50));
 
-    // Parallélisation des checks
-    await Promise.all(config.urls.map(u => this.checkUrl(u)));
+    // **Séquentiel pour éviter chevauchement et 429**
+    for (const u of config.urls) {
+      await this.checkUrl(u);
+      await this.sleep(1000); // pause minimale entre URL
+    }
 
     this.log('✅ Fin monitoring');
   }
 
+  sleep(ms) {
+    return new Promise(r => setTimeout(r, ms));
+  }
+
   /* ===========================
-     SHUTDOWN
+     SHUTDOWN PROPRE
   =========================== */
   async shutdown() {
     try {
