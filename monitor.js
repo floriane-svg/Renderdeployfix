@@ -65,10 +65,10 @@ class Monitor {
   async loadPage(page, url) {
     this.log(`➡️ Chargement ${url}`);
     try {
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.goto(url, { waitUntil: 'networkidle', timeout: 120000 });
       await page.waitForTimeout(2000);
     } catch (err) {
-      this.log(`❌ Erreur chargement ${url}: ${err.message}`, 'error');
+      this.log(`❌ Timeout ou erreur sur ${url}: ${err.message}`, 'error');
       throw err;
     }
   }
