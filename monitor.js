@@ -12,81 +12,73 @@ class Monitor {
     this.context = null;
   }
 
-  log(message, level = 'info') {
-    const timestamp = new Date().toISOString();
-    console.log(`[${timestamp}] [${level.toUpperCase()}] ${message}`);
+  log(msg, level = 'info') {
+    console.log(`[${new Date().toISOString()}] [${level.toUpperCase()}] ${msg}`);
   }
 
   /* ===========================
-     BROWSER / CONTEXT
+     BROWSER
   =========================== */
 
   async ensureBrowser() {
     if (this.browser && this.browser.isConnected()) return this.browser;
 
-    this.log('🌐 Initialisation navigateur...');
+    this.log('🌐 Lancement Chromium...');
     this.browser = await chromium.launch({
       args: chromiumPkg.args,
       executablePath: await chromiumPkg.executablePath(),
       headless: true
     });
 
-    this.browser.on('disconnected', () => {
-      this.log('⚠️ Navigateur déconnecté', 'warn');
-      this.browser = null;
-      this.context = null;
-    });
-
-    this.log('✅ Navigateur OK');
+    this.log('✅ Chromium prêt');
     return this.browser;
   }
 
   async ensureContext() {
-    if (this.context) {
-      try {
-        if (this.context.browser()?.isConnected()) return this.context;
-      } catch (_) {}
-      this.context = null;
-    }
+    if (this.context) return this.context;
 
     const browser = await this.ensureBrowser();
     this.context = await browser.newContext({
       viewport: { width: 1920, height: 1080 },
       locale: 'pt-BR',
-      timezoneId: 'America/Sao_Paulo'
+      timezoneId: 'America/Sao_Paulo',
+      userAgent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36'
     });
 
-    this.log('✅ Context OK');
+    this.log('✅ Context prêt');
     return this.context;
   }
 
-  async withPage(callback) {
+  async withPage(fn) {
     const context = await this.ensureContext();
     const page = await context.newPage();
     try {
-      return await callback(page);
+      return await fn(page);
     } finally {
       await page.close().catch(() => {});
     }
   }
 
   /* ===========================
-     PAGE LOAD (SAFE)
+     PAGE LOAD (ANTI TIMEOUT)
   =========================== */
 
-  async openPage(page, url) {
+  async loadPage(page, url) {
+    this.log(`➡️ Chargement ${url}`);
+
+    // ⚠️ IMPORTANT : ne PAS attendre networkidle
     await page.goto(url, {
-      waitUntil: 'networkidle',
-      timeout: 30000
+      waitUntil: 'domcontentloaded',
+      timeout: 60000
     });
 
-    // Laisse le JS hydrater tranquillement
-    await page.waitForTimeout(3000);
+    // Laisse React / API finir tranquillement
+    await page.waitForTimeout(5000);
   }
 
   /* ===========================
-     SUPPLY EXTRACTION
-     (same logic as Cloudflare)
+     SUPPLY EXTRACTION (JS REAL)
   =========================== */
 
   async extractSupply(page) {
@@ -94,63 +86,51 @@ class Monitor {
       const container = document.querySelector(
         'div[data-testid="CONTEXTUAL_SEARCH_TITLE"]'
       );
+      if (!container) return { value: 0, occurrences: 0 };
 
-      if (!container) {
-        return { value: 0, occurrences: 0 };
-      }
+      const spans = [...container.querySelectorAll('span')];
+      const numbers = spans
+        .map(s => s.textContent.trim())
+        .filter(t => /^\d+$/.test(t))
+        .map(Number);
 
-      const spans = container.querySelectorAll('span');
-      let occurrences = 0;
+      if (!numbers.length) return { value: 0, occurrences: 0 };
 
-      for (const span of spans) {
-        const txt = span.textContent.trim();
-        if (/^\d+$/.test(txt)) {
-          occurrences++;
-          return {
-            value: parseInt(txt, 10),
-            occurrences
-          };
-        }
-      }
-
-      return { value: 0, occurrences };
+      return {
+        value: Math.max(...numbers),
+        occurrences: numbers.length
+      };
     });
   }
 
   /* ===========================
-     URL CHECK
+     CHECK URL
   =========================== */
 
-  async checkUrl(urlConfig) {
-    const { name, url } = urlConfig;
-
-    this.log('\n' + '='.repeat(50));
-    this.log(`🔍 ${name}`);
-    this.log('='.repeat(50));
+  async checkUrl({ name, url }) {
+    this.log(`\n🔍 ${name}`);
 
     try {
-      const result = await this.withPage(async (page) => {
-        await this.openPage(page, url);
+      const result = await this.withPage(async page => {
+        await this.loadPage(page, url);
         return await this.extractSupply(page);
       });
 
-      this.log(`📊 Compteur détecté : ${result.value}`);
-      this.log(`🔎 Occurrences numériques : ${result.occurrences}`);
+      this.log(`📊 Annonces détectées : ${result.value}`);
 
       if (result.value >= 1) {
-        const message =
+        await this.sendTelegram(
           `🚨 <b>Alerte logement</b>\n\n` +
           `📍 <b>${name}</b>\n` +
           `📊 Annonces : <b>${result.value}</b>\n\n` +
-          `🔗 <a href="${url}">Voir les annonces</a>`;
-
-        await this.sendTelegram(message);
+          `🔗 <a href="${url}">Voir</a>`
+        );
       } else {
-        this.log('ℹ️ Aucune annonce (0)');
+        this.log('ℹ️ Aucune annonce');
       }
 
-    } catch (error) {
-      this.log(`❌ Erreur ${name}: ${error.message}`, 'error');
+    } catch (err) {
+      this.log(`❌ Erreur ${name}: ${err.message}`, 'error');
     }
   }
 
@@ -168,18 +148,17 @@ class Monitor {
   }
 
   async sendStartup() {
-    const message =
+    await this.sendTelegram(
       `🚀 <b>Monitor démarré</b>\n\n` +
-      `✅ Playwright actif\n` +
+      `🧠 Détection JS réelle\n` +
       `🎯 Alerte dès <b>1 annonce</b>\n\n` +
-      `📍 <b>Zones surveillées :</b>\n` +
-      config.urls.map((u, i) => `${i + 1}. ${u.name}`).join('\n');
-
-    await this.sendTelegram(message);
+      `📍 Zones surveillées:\n` +
+      config.urls.map((u, i) => `${i + 1}. ${u.name}`).join('\n')
+    );
   }
 
   /* ===========================
-     MAIN LOOP
+     MAIN
   =========================== */
 
   async runMonitoring() {
@@ -187,21 +166,16 @@ class Monitor {
     this.log('🏠 MONITORING QUINTOANDAR');
     this.log('█'.repeat(50));
 
-    await this.ensureBrowser();
-    await this.ensureContext();
-
-    for (const urlConfig of config.urls) {
-      await this.checkUrl(urlConfig);
-      await this.sleep(1000);
+    for (const u of config.urls) {
+      await this.checkUrl(u);
+      await this.sleep(1500);
     }
 
-    this.log('█'.repeat(50));
-    this.log('✅ TERMINÉ');
-    this.log('█'.repeat(50) + '\n');
+    this.log('✅ Fin monitoring');
   }
 
   sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise(r => setTimeout(r, ms));
   }
 }
 
