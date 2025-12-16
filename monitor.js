@@ -62,11 +62,8 @@ class Monitor {
     this.log(`➡️ Chargement ${url}`);
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
-      // Attendre que le texte du compteur contienne un chiffre
-      await page.waitForFunction(() => {
-        const container = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
-        return container && /\d+/.test(container.textContent);
-      }, { timeout: 20000 });
+      // Attendre que le container soit présent
+      await page.waitForSelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"] span', { timeout: 20000 });
     } catch (err) {
       this.log(`⚠️ Skip ${url} après timeout ou erreur: ${err.message}`, 'warn');
     }
@@ -78,10 +75,13 @@ class Monitor {
         const container = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
         if (!container) return { value: 0, occurrences: 0 };
 
-        const match = container.textContent.match(/\d+/);
-        if (!match) return { value: 0, occurrences: 0 };
+        const span = container.querySelector('span');
+        if (!span) return { value: 0, occurrences: 0 };
 
-        return { value: parseInt(match[0], 10), occurrences: 1 };
+        const number = parseInt(span.textContent.trim(), 10);
+        if (isNaN(number)) return { value: 0, occurrences: 0 };
+
+        return { value: number, occurrences: 1 };
       });
     } catch {
       return { value: 0, occurrences: 0 };
@@ -148,3 +148,4 @@ class Monitor {
 }
 
 module.exports = Monitor;
+
