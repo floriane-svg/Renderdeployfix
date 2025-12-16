@@ -8,8 +8,8 @@ class Monitor {
     this.telegramToken = telegramToken;
     this.telegramChatId = telegramChatId;
     this.telegramApi = `https://api.telegram.org/bot${telegramToken}/sendMessage`;
-    this.browser = null;   // Chromium pré-chrome
-    this.context = null;   // Contexte pré-chrome
+    this.browser = null;
+    this.context = null;
   }
 
   log(msg, level = 'info') {
@@ -17,7 +17,7 @@ class Monitor {
   }
 
   /* ===========================
-     BROWSER (Pré-chrome)
+     BROWSER
   =========================== */
   async ensureBrowser() {
     if (this.browser && this.browser.isConnected()) return this.browser;
@@ -29,7 +29,7 @@ class Monitor {
       headless: true
     });
 
-    this.log('✅ Chromium prêt (pré-chrome)');
+    this.log('✅ Chromium prêt');
     return this.browser;
   }
 
@@ -45,7 +45,7 @@ class Monitor {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36'
     });
 
-    this.log('✅ Contexte prêt (pré-chrome)');
+    this.log('✅ Contexte prêt');
     return this.context;
   }
 
@@ -60,16 +60,21 @@ class Monitor {
   }
 
   /* ===========================
-     PAGE LOAD RAPIDE
+     PAGE LOAD
   =========================== */
   async loadPage(page, url) {
     this.log(`➡️ Chargement ${url}`);
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(2000); // petit délai pour React/JS
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForTimeout(2000);
+    } catch (err) {
+      this.log(`❌ Erreur chargement ${url}: ${err.message}`, 'error');
+      throw err;
+    }
   }
 
   /* ===========================
-     SUPPLY EXTRACTION
+     EXTRACTION
   =========================== */
   async extractSupply(page) {
     return await page.evaluate(() => {
@@ -128,18 +133,22 @@ class Monitor {
      TELEGRAM
   =========================== */
   async sendTelegram(text) {
-    await axios.post(this.telegramApi, {
-      chat_id: this.telegramChatId,
-      text,
-      parse_mode: 'HTML'
-    });
-    this.log('✉️ Telegram envoyé');
+    try {
+      await axios.post(this.telegramApi, {
+        chat_id: this.telegramChatId,
+        text,
+        parse_mode: 'HTML'
+      });
+      this.log('✉️ Telegram envoyé');
+    } catch (err) {
+      this.log(`❌ Erreur Telegram: ${err.message}`, 'error');
+    }
   }
 
   async sendStartup() {
     await this.sendTelegram(
       `🚀 <b>Monitor démarré</b>\n\n` +
-      `🧠 Détection JS réelle (Playwright pré-chrome)\n\n` +
+      `🧠 Détection JS réelle (Playwright)\n\n` +
       `📍 Zones surveillées:\n` +
       config.urls
         .map((u, i) => `${i + 1}. ${u.name} (≥${u.threshold ?? 1})`)
@@ -155,17 +164,10 @@ class Monitor {
     this.log('🏠 MONITORING QUINTOANDAR');
     this.log('█'.repeat(50));
 
-    // Les checks rapides mais stables
-    for (const u of config.urls) {
-      await this.checkUrl(u);
-      await this.sleep(1000); // pause minimale pour éviter chevauchement cron
-    }
+    // Parallélisation des checks
+    await Promise.all(config.urls.map(u => this.checkUrl(u)));
 
     this.log('✅ Fin monitoring');
-  }
-
-  sleep(ms) {
-    return new Promise(r => setTimeout(r, ms));
   }
 }
 
