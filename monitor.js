@@ -71,27 +71,22 @@ class Monitor {
   }
 
   /* ===========================
-     PAGE FETCH
+     PAGE LOAD (SAFE)
   =========================== */
 
   async openPage(page, url) {
     await page.goto(url, {
-      waitUntil: 'domcontentloaded',
+      waitUntil: 'networkidle',
       timeout: 30000
     });
 
-    // Laisse le JS hydrater
+    // Laisse le JS hydrater tranquillement
     await page.waitForTimeout(3000);
-
-    // Attend le bloc du compteur
-    await page.waitForSelector(
-      'div[data-testid="CONTEXTUAL_SEARCH_TITLE"]',
-      { timeout: 15000 }
-    );
   }
 
   /* ===========================
-     SUPPLY EXTRACTION (KEY)
+     SUPPLY EXTRACTION
+     (same logic as Cloudflare)
   =========================== */
 
   async extractSupply(page) {
@@ -99,7 +94,10 @@ class Monitor {
       const container = document.querySelector(
         'div[data-testid="CONTEXTUAL_SEARCH_TITLE"]'
       );
-      if (!container) return { value: 0, occurrences: 0 };
+
+      if (!container) {
+        return { value: 0, occurrences: 0 };
+      }
 
       const spans = container.querySelectorAll('span');
       let occurrences = 0;
@@ -203,7 +201,7 @@ class Monitor {
   }
 
   sleep(ms) {
-    return new Promise(r => setTimeout(r, ms));
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
 
