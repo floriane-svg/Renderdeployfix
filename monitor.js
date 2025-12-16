@@ -73,7 +73,7 @@ class Monitor {
     this.log(`➡️ Chargement ${url}`);
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }); // 20s max
-      await page.waitForSelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]', { timeout: 10000, state: 'attached' }); // 10s max
+      await page.waitForSelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]', { timeout: 15000, state: 'attached' }); // 15s max
       await page.waitForTimeout(1000); // courte pause pour React
     } catch (err) {
       this.log(`⚠️ Skip ${url} après timeout ou erreur: ${err.message}`, 'warn');
