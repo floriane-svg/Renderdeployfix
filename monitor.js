@@ -16,7 +16,7 @@ class Monitor {
     console.log(`[${new Date().toISOString()}] [${level.toUpperCase()}] ${msg}`);
   }
 
-  // 🔹 Assure que le navigateur est lancé
+  // 🔹 Lancement Chromium avec retry ETXTBSY
   async ensureBrowser(retries = 3) {
     if (this.browser && this.browser.isConnected()) return this.browser;
 
@@ -41,7 +41,7 @@ class Monitor {
     }
   }
 
-  // 🔹 Assure que le contexte est prêt
+  // 🔹 Contexte rapide
   async ensureContext() {
     if (this.context) return this.context;
     const browser = await this.ensureBrowser();
@@ -51,7 +51,6 @@ class Monitor {
       timezoneId: 'America/Sao_Paulo',
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36'
     });
-    // Bloque images, fonts, vidéos pour aller plus vite
     await this.context.route('**/*.{png,jpg,jpeg,gif,svg,webp}', r => r.abort());
     await this.context.route('**/*.{woff,woff2,ttf,otf}', r => r.abort());
     await this.context.route('**/*.{mp4,webm}', r => r.abort());
@@ -59,7 +58,7 @@ class Monitor {
     return this.context;
   }
 
-  // 🔹 Exécution d'une page avec timeout global pour éviter blocage
+  // 🔹 Page avec timeout et extraction fiable
   async withPage(fn, pageTimeout = 30000) {
     const context = await this.ensureContext();
     const page = await context.newPage();
@@ -80,36 +79,41 @@ class Monitor {
     }
   }
 
-  // 🔹 Chargement rapide de la page avec timeout court
+  // 🔹 Chargement rapide de la page
   async loadPage(page, url) {
     this.log(`➡️ Chargement ${url}`);
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-      await page.waitForSelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]', { timeout: 15000, state: 'attached' });
-      await page.waitForTimeout(1000); // courte pause pour React
+      await page.waitForSelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]', { timeout: 20000, state: 'attached' });
+      await page.waitForTimeout(500); // très courte pause pour React
     } catch (err) {
       this.log(`⚠️ Skip ${url} après timeout ou erreur: ${err.message}`, 'warn');
     }
   }
 
-  // 🔹 Extraction du chiffre dans le <span>
+  // 🔹 Extraction instantanée du nombre d’annonces
   async extractSupply(page) {
     try {
       return await page.evaluate(() => {
         const container = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
         if (!container) return { value: 0, occurrences: 0 };
         const span = container.querySelector('span');
-        if (!span) return { value: 0, occurrences: 0 };
+        if (!span) {
+          // Cas "0 annonces" détecté par parent différent
+          const textContent = container.textContent || '';
+          const matchZero = textContent.match(/= \$0/);
+          if (matchZero) return { value: 0, occurrences: 1 };
+          return { value: 0, occurrences: 0 };
+        }
         const number = parseInt(span.textContent.trim(), 10);
-        if (isNaN(number)) return { value: 0, occurrences: 0 };
-        return { value: number, occurrences: 1 };
+        return isNaN(number) ? { value: 0, occurrences: 0 } : { value: number, occurrences: 1 };
       });
     } catch {
       return { value: 0, occurrences: 0 };
     }
   }
 
-  // 🔹 Vérification d'une URL
+  // 🔹 Vérification URL
   async checkUrl(urlConfig) {
     const { name, url, threshold = 1 } = urlConfig;
     this.log(`\n🔍 ${name}`);
@@ -126,7 +130,7 @@ class Monitor {
     }
   }
 
-  // 🔹 Envoi Telegram
+  // 🔹 Telegram
   async sendTelegram(text) {
     try {
       await axios.post(this.telegramApi, { chat_id: this.telegramChatId, text, parse_mode: 'HTML' });
@@ -136,18 +140,14 @@ class Monitor {
     }
   }
 
-  // 🔹 Message de démarrage
+  // 🔹 Startup
   async sendStartup() {
-    const zones = config.urls
-      .map((u, i) => `${i + 1}. ${u.name} (≥${u.threshold ?? 1})`)
-      .join('\n');
-
+    const zones = config.urls.map((u, i) => `${i + 1}. ${u.name} (≥${u.threshold ?? 1})`).join('\n');
     try {
       await axios.post(this.telegramApi, {
         chat_id: this.telegramChatId,
         parse_mode: 'HTML',
-        text: `🚀 <b>Monitor démarré</b>\n\n🧠 Détection JS réelle (Playwright)\n\n` +
-              `📍 Zones surveillées:\n${zones}`
+        text: `🚀 <b>Monitor démarré</b>\n\n🧠 Détection JS réelle (Playwright)\n\n📍 Zones surveillées:\n${zones}`
       });
       this.log('✉️ Telegram startup envoyé');
     } catch (err) {
