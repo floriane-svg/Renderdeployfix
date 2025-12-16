@@ -17,201 +17,175 @@ class Monitor {
     console.log(`[${timestamp}] [${level.toUpperCase()}] ${message}`);
   }
 
+  /* ===========================
+     BROWSER / CONTEXT
+  =========================== */
+
   async ensureBrowser() {
-    if (this.browser && this.browser.isConnected()) {
-      return this.browser;
-    }
+    if (this.browser && this.browser.isConnected()) return this.browser;
 
-    try {
-      this.log('🌐 Initialisation navigateur...');
-      
-      this.browser = await chromium.launch({
-        args: chromiumPkg.args,
-        executablePath: await chromiumPkg.executablePath(),
-        headless: true
-      });
+    this.log('🌐 Initialisation navigateur...');
+    this.browser = await chromium.launch({
+      args: chromiumPkg.args,
+      executablePath: await chromiumPkg.executablePath(),
+      headless: true
+    });
 
-      this.browser.on('disconnected', () => {
-        this.log('⚠️ Navigateur déconnecté', 'warn');
-        this.browser = null;
-        this.context = null;
-      });
-
-      this.log('✅ Navigateur OK');
-      return this.browser;
-    } catch (error) {
-      this.log(`❌ Erreur navigateur: ${error.message}`, 'error');
+    this.browser.on('disconnected', () => {
+      this.log('⚠️ Navigateur déconnecté', 'warn');
       this.browser = null;
-      throw error;
-    }
+      this.context = null;
+    });
+
+    this.log('✅ Navigateur OK');
+    return this.browser;
   }
 
   async ensureContext() {
     if (this.context) {
       try {
-        const browserConnected = this.context.browser()?.isConnected();
-        if (browserConnected) {
-          return this.context;
-        }
-        this.log('⚠️ Context stale, réinitialisation...', 'warn');
-        this.context = null;
-      } catch (e) {
-        this.context = null;
-      }
-    }
-
-    try {
-      const browser = await this.ensureBrowser();
-      
-      this.context = await browser.newContext({
-        viewport: { width: 1920, height: 1080 },
-        locale: 'pt-BR',
-        timezoneId: 'America/Sao_Paulo'
-      });
-
-      this.context.on('close', () => {
-        this.log('⚠️ Context fermé', 'warn');
-        this.context = null;
-      });
-
-      this.log('✅ Context OK');
-      return this.context;
-    } catch (error) {
-      this.log(`❌ Erreur context: ${error.message}`, 'error');
+        if (this.context.browser()?.isConnected()) return this.context;
+      } catch (_) {}
       this.context = null;
-      throw error;
     }
+
+    const browser = await this.ensureBrowser();
+    this.context = await browser.newContext({
+      viewport: { width: 1920, height: 1080 },
+      locale: 'pt-BR',
+      timezoneId: 'America/Sao_Paulo'
+    });
+
+    this.log('✅ Context OK');
+    return this.context;
   }
 
   async withPage(callback) {
-    let page = null;
-    
+    const context = await this.ensureContext();
+    const page = await context.newPage();
     try {
-      const context = await this.ensureContext();
-      page = await context.newPage();
-      const result = await callback(page);
-      await page.close();
-      return result;
-    } catch (error) {
-      if (page) {
-        await page.close().catch(() => {});
-      }
-      throw error;
+      return await callback(page);
+    } finally {
+      await page.close().catch(() => {});
     }
   }
 
-  async fetchPage(url, attempt = 1) {
-    const maxAttempts = 3;
-    
-    for (let i = attempt; i <= maxAttempts; i++) {
-      try {
-        this.log(`Tentative ${i}/${maxAttempts} - ${url}`);
-        
-        const html = await this.withPage(async (page) => {
-          await page.goto(url, {
-            waitUntil: 'domcontentloaded',
-            timeout: 25000
-          });
+  /* ===========================
+     PAGE FETCH
+  =========================== */
 
-          await page.waitForTimeout(2000);
+  async openPage(page, url) {
+    await page.goto(url, {
+      waitUntil: 'domcontentloaded',
+      timeout: 30000
+    });
 
-          const html = await page.content();
-          
-          if (html.length < 5000) {
-            throw new Error('HTML incomplet');
-          }
+    // Laisse le JS hydrater
+    await page.waitForTimeout(3000);
 
-          this.log(`✅ Page OK (${(html.length / 1024).toFixed(1)} KB)`);
-          return html;
-        });
+    // Attend le bloc du compteur
+    await page.waitForSelector(
+      'div[data-testid="CONTEXTUAL_SEARCH_TITLE"]',
+      { timeout: 15000 }
+    );
+  }
 
-        return html;
+  /* ===========================
+     SUPPLY EXTRACTION (KEY)
+  =========================== */
 
-      } catch (error) {
-        this.log(`❌ Erreur tentative ${i}: ${error.message}`, 'error');
-        
-        if (i >= maxAttempts) {
-          throw new Error(`Échec après ${maxAttempts} tentatives`);
+  async extractSupply(page) {
+    return await page.evaluate(() => {
+      const container = document.querySelector(
+        'div[data-testid="CONTEXTUAL_SEARCH_TITLE"]'
+      );
+      if (!container) return { value: 0, occurrences: 0 };
+
+      const spans = container.querySelectorAll('span');
+      let occurrences = 0;
+
+      for (const span of spans) {
+        const txt = span.textContent.trim();
+        if (/^\d+$/.test(txt)) {
+          occurrences++;
+          return {
+            value: parseInt(txt, 10),
+            occurrences
+          };
         }
-
-        if (error.message.includes('closed') || error.message.includes('disconnected')) {
-          this.log('⚠️ Redémarrage navigateur...', 'warn');
-          await this.restart();
-        }
-
-        await this.sleep(2000);
       }
-    }
+
+      return { value: 0, occurrences };
+    });
   }
 
-  countKeyword(html) {
-    const lowerHtml = html.toLowerCase();
-    const keyword = config.keyword.toLowerCase();
-    const count = lowerHtml.split(keyword).length - 1;
-    return count;
-  }
+  /* ===========================
+     URL CHECK
+  =========================== */
 
   async checkUrl(urlConfig) {
-    const { name, url, threshold } = urlConfig;
-    
-    this.log(`\n${'='.repeat(50)}`);
+    const { name, url } = urlConfig;
+
+    this.log('\n' + '='.repeat(50));
     this.log(`🔍 ${name}`);
-    this.log(`${'='.repeat(50)}`);
+    this.log('='.repeat(50));
 
     try {
-      const html = await this.fetchPage(url);
-      const count = this.countKeyword(html);
-      
-      this.log(`📊 Résultat: ${count} occurrence(s)`);
-      
-      if (count >= threshold) {
-        const message = `🏠 <b>ALERTE ${name}</b>\n\n` +
-          `📊 <b>${count}</b> annonce(s)\n` +
-          `⚠️ Seuil: ≥${threshold}\n\n` +
-          `🔗 <a href="${url}">Voir</a>`;
-        
+      const result = await this.withPage(async (page) => {
+        await this.openPage(page, url);
+        return await this.extractSupply(page);
+      });
+
+      this.log(`📊 Compteur détecté : ${result.value}`);
+      this.log(`🔎 Occurrences numériques : ${result.occurrences}`);
+
+      if (result.value >= 1) {
+        const message =
+          `🚨 <b>Alerte logement</b>\n\n` +
+          `📍 <b>${name}</b>\n` +
+          `📊 Annonces : <b>${result.value}</b>\n\n` +
+          `🔗 <a href="${url}">Voir les annonces</a>`;
+
         await this.sendTelegram(message);
       } else {
-        this.log(`ℹ️ Pas d'alerte (${count} < ${threshold})`);
+        this.log('ℹ️ Aucune annonce (0)');
       }
-      
-      return count;
-      
+
     } catch (error) {
       this.log(`❌ Erreur ${name}: ${error.message}`, 'error');
-      return 0;
     }
   }
 
+  /* ===========================
+     TELEGRAM
+  =========================== */
+
   async sendTelegram(text) {
-    try {
-      await axios.post(this.telegramApi, {
-        chat_id: this.telegramChatId,
-        text: text,
-        parse_mode: 'HTML'
-      });
-      this.log('✉️ Telegram OK');
-      return true;
-    } catch (error) {
-      this.log(`❌ Telegram: ${error.message}`, 'error');
-      return false;
-    }
+    await axios.post(this.telegramApi, {
+      chat_id: this.telegramChatId,
+      text,
+      parse_mode: 'HTML'
+    });
+    this.log('✉️ Telegram envoyé');
   }
 
   async sendStartup() {
-    const message = `🚀 <b>Monitor Démarré</b>\n\n` +
+    const message =
+      `🚀 <b>Monitor démarré</b>\n\n` +
       `✅ Playwright actif\n` +
-      `⏱ Cron externe (1 min)\n\n` +
-      `📍 <b>Surveillance:</b>\n` +
-      config.urls.map((u, i) => 
-        `${i + 1}. ${u.name} (≥${u.threshold})`
-      ).join('\n');
-    
+      `🎯 Alerte dès <b>1 annonce</b>\n\n` +
+      `📍 <b>Zones surveillées :</b>\n` +
+      config.urls.map((u, i) => `${i + 1}. ${u.name}`).join('\n');
+
     await this.sendTelegram(message);
   }
 
+  /* ===========================
+     MAIN LOOP
+  =========================== */
+
   async runMonitoring() {
-    this.log('\n' + '█'.repeat(50));
+    this.log('█'.repeat(50));
     this.log('🏠 MONITORING QUINTOANDAR');
     this.log('█'.repeat(50));
 
@@ -219,12 +193,8 @@ class Monitor {
     await this.ensureContext();
 
     for (const urlConfig of config.urls) {
-      try {
-        await this.checkUrl(urlConfig);
-        await this.sleep(1000);
-      } catch (error) {
-        this.log(`❌ Erreur ${urlConfig.name}: ${error.message}`, 'error');
-      }
+      await this.checkUrl(urlConfig);
+      await this.sleep(1000);
     }
 
     this.log('█'.repeat(50));
@@ -232,41 +202,8 @@ class Monitor {
     this.log('█'.repeat(50) + '\n');
   }
 
-  async restart() {
-    this.log('🔄 Redémarrage complet...');
-    
-    if (this.context) {
-      await this.context.close().catch(() => {});
-      this.context = null;
-    }
-    
-    if (this.browser) {
-      await this.browser.close().catch(() => {});
-      this.browser = null;
-    }
-    
-    await this.ensureBrowser();
-    await this.ensureContext();
-  }
-
-  async shutdown() {
-    this.log('🔒 Fermeture...');
-    
-    if (this.context) {
-      await this.context.close().catch(() => {});
-      this.context = null;
-    }
-    
-    if (this.browser) {
-      await this.browser.close().catch(() => {});
-      this.browser = null;
-    }
-    
-    this.log('✅ Fermé');
-  }
-
   sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise(r => setTimeout(r, ms));
   }
 }
 
