@@ -53,7 +53,7 @@ class Monitor {
       return await fn(page);
     } catch (err) {
       this.log(`⚠️ Page skipped: ${err.message}`, 'warn');
-      return { value: 0, occurrences: 0 }; // <- continue même en cas de timeout
+      return { value: 0, occurrences: 0 }; // continue même en cas de timeout
     } finally {
       await page.close().catch(() => {});
     }
@@ -110,6 +110,13 @@ class Monitor {
     } catch (err) {
       this.log(`❌ Erreur Telegram: ${err.message}`, 'error');
     }
+  }
+
+  async sendStartup() {
+    await this.sendTelegram(
+      `🚀 <b>Monitor démarré</b>\n\n🧠 Détection JS réelle (Playwright)\n\n` +
+      `📍 Zones surveillées:\n${config.urls.map((u, i) => `${i + 1}. ${u.name} (≥${u.threshold ?? 1})`).join('\n')}`
+    );
   }
 
   async runMonitoring() {
