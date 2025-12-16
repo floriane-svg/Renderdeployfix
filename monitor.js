@@ -38,7 +38,6 @@ class Monitor {
       userAgent:
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36'
     });
-    // Bloquer ressources inutiles
     await this.context.route('**/*.{png,jpg,jpeg,gif,svg,webp}', r => r.abort());
     await this.context.route('**/*.{woff,woff2,ttf,otf}', r => r.abort());
     await this.context.route('**/*.{mp4,webm}', r => r.abort());
@@ -53,7 +52,7 @@ class Monitor {
       return await fn(page);
     } catch (err) {
       this.log(`⚠️ Page skipped: ${err.message}`, 'warn');
-      return { value: 0, occurrences: 0 }; // continue même en cas de timeout
+      return { value: 0, occurrences: 0 };
     } finally {
       await page.close().catch(() => {});
     }
@@ -62,11 +61,10 @@ class Monitor {
   async loadPage(page, url) {
     this.log(`➡️ Chargement ${url}`);
     try {
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 40000 });
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 50000 });
       await page.waitForTimeout(1500);
     } catch (err) {
       this.log(`⚠️ Skip ${url} après timeout ou erreur: ${err.message}`, 'warn');
-      // Ne throw plus, continue avec valeur par défaut
     }
   }
 
@@ -88,19 +86,27 @@ class Monitor {
     }
   }
 
-  async checkUrl(urlConfig) {
+  async checkUrl(urlConfig, retry = true) {
     const { name, url, threshold = 1 } = urlConfig;
     this.log(`\n🔍 ${name}`);
-    const result = await this.withPage(async page => {
+    let result = await this.withPage(async page => {
       await this.loadPage(page, url);
       return await this.extractSupply(page);
     });
+
+    // Si 0 et retry autorisé, on tente une fois de plus
+    if (result.value === 0 && retry) {
+      this.log(`🔁 Retry ${url}...`);
+      result = await this.checkUrl(urlConfig, false);
+    }
+
     this.log(`📊 Annonces détectées : ${result.value} (seuil ≥${threshold})`);
     if (result.value >= threshold) {
       await this.sendTelegram(
         `🚨 <b>Alerte logement</b>\n\n📍 <b>${name}</b>\n📊 Annonces : <b>${result.value}</b>\n⚠️ Seuil : ≥${threshold}\n\n🔗 <a href="${url}">Voir</a>`
       );
     }
+    return result;
   }
 
   async sendTelegram(text) {
@@ -124,8 +130,14 @@ class Monitor {
     this.log('🏠 MONITORING QUINTOANDAR');
     this.log('█'.repeat(50));
 
-    // ✅ Parallélisation safe, skip pages bloquées
-    await Promise.all(config.urls.map(u => this.checkUrl(u)));
+    // 🔹 Séquentiel pour fiabilité maximale
+    for (const urlConfig of config.urls) {
+      try {
+        await this.checkUrl(urlConfig);
+      } catch (err) {
+        this.log(`❌ Erreur checkUrl ${urlConfig.name}: ${err.message}`, 'error');
+      }
+    }
 
     this.log('✅ Fin monitoring');
   }
