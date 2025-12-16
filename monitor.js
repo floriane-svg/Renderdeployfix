@@ -16,26 +16,20 @@ class Monitor {
     console.log(`[${new Date().toISOString()}] [${level.toUpperCase()}] ${msg}`);
   }
 
-  /* ===========================
-     BROWSER + CONTEXT
-  =========================== */
   async ensureBrowser() {
     if (this.browser && this.browser.isConnected()) return this.browser;
-
     this.log('🌐 Lancement Chromium...');
     this.browser = await chromium.launch({
       args: chromiumPkg.args,
       executablePath: await chromiumPkg.executablePath(),
       headless: true
     });
-
     this.log('✅ Chromium prêt');
     return this.browser;
   }
 
   async ensureContext() {
     if (this.context) return this.context;
-
     const browser = await this.ensureBrowser();
     this.context = await browser.newContext({
       viewport: { width: 1920, height: 1080 },
@@ -44,12 +38,10 @@ class Monitor {
       userAgent:
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36'
     });
-
-    // Bloquer ressources inutiles pour aller plus vite
-    await this.context.route('**/*.{png,jpg,jpeg,gif,svg,webp}', route => route.abort());
-    await this.context.route('**/*.{woff,woff2,ttf,otf}', route => route.abort());
-    await this.context.route('**/*.{mp4,webm}', route => route.abort());
-
+    // Bloquer ressources inutiles
+    await this.context.route('**/*.{png,jpg,jpeg,gif,svg,webp}', r => r.abort());
+    await this.context.route('**/*.{woff,woff2,ttf,otf}', r => r.abort());
+    await this.context.route('**/*.{mp4,webm}', r => r.abort());
     this.log('✅ Contexte prêt');
     return this.context;
   }
@@ -59,78 +51,58 @@ class Monitor {
     const page = await context.newPage();
     try {
       return await fn(page);
+    } catch (err) {
+      this.log(`⚠️ Page skipped: ${err.message}`, 'warn');
+      return { value: 0, occurrences: 0 }; // <- continue même en cas de timeout
     } finally {
       await page.close().catch(() => {});
     }
   }
 
-  /* ===========================
-     PAGE LOAD RAPIDE ET SAFE
-  =========================== */
   async loadPage(page, url) {
     this.log(`➡️ Chargement ${url}`);
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 40000 });
-      await page.waitForTimeout(1500); // JS léger pour React/API
+      await page.waitForTimeout(1500);
     } catch (err) {
       this.log(`⚠️ Skip ${url} après timeout ou erreur: ${err.message}`, 'warn');
+      // Ne throw plus, continue avec valeur par défaut
     }
   }
 
-  /* ===========================
-     EXTRACTION
-  =========================== */
   async extractSupply(page) {
-    return await page.evaluate(() => {
-      const container = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
-      if (!container) return { value: 0, occurrences: 0 };
-
-      const spans = [...container.querySelectorAll('span')];
-      const numbers = spans
-        .map(s => s.textContent.trim())
-        .filter(t => /^\d+$/.test(t))
-        .map(Number);
-
-      if (!numbers.length) return { value: 0, occurrences: 0 };
-
-      return { value: Math.max(...numbers), occurrences: numbers.length };
-    });
+    try {
+      return await page.evaluate(() => {
+        const container = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
+        if (!container) return { value: 0, occurrences: 0 };
+        const spans = [...container.querySelectorAll('span')];
+        const numbers = spans
+          .map(s => s.textContent.trim())
+          .filter(t => /^\d+$/.test(t))
+          .map(Number);
+        if (!numbers.length) return { value: 0, occurrences: 0 };
+        return { value: Math.max(...numbers), occurrences: numbers.length };
+      });
+    } catch {
+      return { value: 0, occurrences: 0 };
+    }
   }
 
-  /* ===========================
-     CHECK URL
-  =========================== */
   async checkUrl(urlConfig) {
     const { name, url, threshold = 1 } = urlConfig;
     this.log(`\n🔍 ${name}`);
-
-    try {
-      const result = await this.withPage(async page => {
-        await this.loadPage(page, url);
-        return await this.extractSupply(page);
-      });
-
-      this.log(`📊 Annonces détectées : ${result.value} (seuil ≥${threshold})`);
-
-      if (result.value >= threshold) {
-        await this.sendTelegram(
-          `🚨 <b>Alerte logement</b>\n\n` +
-          `📍 <b>${name}</b>\n` +
-          `📊 Annonces : <b>${result.value}</b>\n` +
-          `⚠️ Seuil : ≥${threshold}\n\n` +
-          `🔗 <a href="${url}">Voir</a>`
-        );
-      } else {
-        this.log('ℹ️ Seuil non atteint');
-      }
-    } catch (err) {
-      this.log(`❌ Erreur ${name}: ${err.message}`, 'error');
+    const result = await this.withPage(async page => {
+      await this.loadPage(page, url);
+      return await this.extractSupply(page);
+    });
+    this.log(`📊 Annonces détectées : ${result.value} (seuil ≥${threshold})`);
+    if (result.value >= threshold) {
+      await this.sendTelegram(
+        `🚨 <b>Alerte logement</b>\n\n📍 <b>${name}</b>\n📊 Annonces : <b>${result.value}</b>\n⚠️ Seuil : ≥${threshold}\n\n🔗 <a href="${url}">Voir</a>`
+      );
     }
   }
 
-  /* ===========================
-     TELEGRAM
-  =========================== */
   async sendTelegram(text) {
     try {
       await axios.post(this.telegramApi, { chat_id: this.telegramChatId, text, parse_mode: 'HTML' });
@@ -140,51 +112,21 @@ class Monitor {
     }
   }
 
-  async sendStartup() {
-    await this.sendTelegram(
-      `🚀 <b>Monitor démarré</b>\n\n` +
-      `🧠 Détection JS réelle (Playwright)\n\n` +
-      `📍 Zones surveillées:\n` +
-      config.urls.map((u, i) => `${i + 1}. ${u.name} (≥${u.threshold ?? 1})`).join('\n')
-    );
-  }
-
-  /* ===========================
-     MAIN
-  =========================== */
   async runMonitoring() {
     this.log('█'.repeat(50));
     this.log('🏠 MONITORING QUINTOANDAR');
     this.log('█'.repeat(50));
 
-    // **Séquentiel pour éviter chevauchement et 429**
-    for (const u of config.urls) {
-      await this.checkUrl(u);
-      await this.sleep(1000); // pause minimale entre URL
-    }
+    // ✅ Parallélisation safe, skip pages bloquées
+    await Promise.all(config.urls.map(u => this.checkUrl(u)));
 
     this.log('✅ Fin monitoring');
   }
 
-  sleep(ms) {
-    return new Promise(r => setTimeout(r, ms));
-  }
-
-  /* ===========================
-     SHUTDOWN PROPRE
-  =========================== */
   async shutdown() {
     try {
-      if (this.context) {
-        await this.context.close();
-        this.context = null;
-        this.log('🛑 Contexte fermé');
-      }
-      if (this.browser) {
-        await this.browser.close();
-        this.browser = null;
-        this.log('🛑 Navigateur fermé');
-      }
+      if (this.context) { await this.context.close(); this.context = null; this.log('🛑 Contexte fermé'); }
+      if (this.browser) { await this.browser.close(); this.browser = null; this.log('🛑 Navigateur fermé'); }
     } catch (err) {
       this.log(`❌ Erreur fermeture: ${err.message}`, 'error');
     }
