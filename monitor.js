@@ -73,13 +73,17 @@ class Monitor {
       return await page.evaluate(() => {
         const container = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
         if (!container) return { value: 0, occurrences: 0 };
-        const spans = [...container.querySelectorAll('span')];
-        const numbers = spans
-          .map(s => s.textContent.trim())
-          .filter(t => /^\d+$/.test(t))
-          .map(Number);
-        if (!numbers.length) return { value: 0, occurrences: 0 };
-        return { value: Math.max(...numbers), occurrences: numbers.length };
+
+        // Cherche directement le premier <span> dans ce bloc
+        const span = container.querySelector('span');
+        if (!span) return { value: 0, occurrences: 0 };
+
+        const text = span.textContent.trim();
+        const number = parseInt(text, 10);
+
+        if (isNaN(number)) return { value: 0, occurrences: 0 };
+
+        return { value: number, occurrences: 1 };
       });
     } catch {
       return { value: 0, occurrences: 0 };
@@ -146,3 +150,4 @@ class Monitor {
 }
 
 module.exports = Monitor;
+
