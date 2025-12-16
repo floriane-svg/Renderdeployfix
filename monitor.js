@@ -169,6 +169,26 @@ class Monitor {
 
     this.log('✅ Fin monitoring');
   }
+
+  /* ===========================
+     SHUTDOWN
+  =========================== */
+  async shutdown() {
+    try {
+      if (this.context) {
+        await this.context.close();
+        this.context = null;
+        this.log('🛑 Contexte fermé');
+      }
+      if (this.browser) {
+        await this.browser.close();
+        this.browser = null;
+        this.log('🛑 Navigateur fermé');
+      }
+    } catch (err) {
+      this.log(`❌ Erreur fermeture: ${err.message}`, 'error');
+    }
+  }
 }
 
 module.exports = Monitor;
