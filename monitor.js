@@ -52,7 +52,7 @@ class Monitor {
       return await fn(page);
     } catch (err) {
       this.log(`⚠️ Page skipped: ${err.message}`, 'warn');
-      return { value: 0, occurrences: 0 }; // continue même en cas de timeout
+      return { value: 0, occurrences: 0 };
     } finally {
       await page.close().catch(() => {});
     }
@@ -62,7 +62,8 @@ class Monitor {
     this.log(`➡️ Chargement ${url}`);
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      await page.waitForTimeout(1500);
+      // Attendre explicitement que le compteur apparaisse
+      await page.waitForSelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"] span', { timeout: 15000 });
     } catch (err) {
       this.log(`⚠️ Skip ${url} après timeout ou erreur: ${err.message}`, 'warn');
     }
@@ -71,18 +72,13 @@ class Monitor {
   async extractSupply(page) {
     try {
       return await page.evaluate(() => {
-        const container = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
-        if (!container) return { value: 0, occurrences: 0 };
-
-        // Cherche directement le premier <span> dans ce bloc
-        const span = container.querySelector('span');
+        const span = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"] span');
         if (!span) return { value: 0, occurrences: 0 };
 
         const text = span.textContent.trim();
         const number = parseInt(text, 10);
 
         if (isNaN(number)) return { value: 0, occurrences: 0 };
-
         return { value: number, occurrences: 1 };
       });
     } catch {
