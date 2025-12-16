@@ -19,7 +19,6 @@ class Monitor {
   /* ===========================
      BROWSER
   =========================== */
-
   async ensureBrowser() {
     if (this.browser && this.browser.isConnected()) return this.browser;
 
@@ -61,25 +60,27 @@ class Monitor {
   }
 
   /* ===========================
-     PAGE LOAD (ANTI TIMEOUT)
+     PAGE LOAD (ANTI TIMEOUT + RETRY)
   =========================== */
-
-  async loadPage(page, url) {
+  async loadPage(page, url, retries = 2) {
     this.log(`➡️ Chargement ${url}`);
-
-    await page.goto(url, {
-      waitUntil: 'domcontentloaded',
-      timeout: 60000
-    });
-
-    // Laisse React / API finir tranquillement
-    await page.waitForTimeout(5000);
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
+        await page.waitForTimeout(5000);
+        return;
+      } catch (err) {
+        if (attempt < retries) {
+          this.log(`⚠️ Retry ${attempt + 1} après erreur : ${err.message}`);
+          await this.sleep(5000 + Math.random() * 5000);
+        } else throw err;
+      }
+    }
   }
 
   /* ===========================
      SUPPLY EXTRACTION (JS RÉEL)
   =========================== */
-
   async extractSupply(page) {
     return await page.evaluate(() => {
       const container = document.querySelector(
@@ -105,10 +106,8 @@ class Monitor {
   /* ===========================
      CHECK URL
   =========================== */
-
   async checkUrl(urlConfig) {
     const { name, url, threshold = 1 } = urlConfig;
-
     this.log(`\n🔍 ${name}`);
 
     try {
@@ -139,7 +138,6 @@ class Monitor {
   /* ===========================
      TELEGRAM
   =========================== */
-
   async sendTelegram(text) {
     await axios.post(this.telegramApi, {
       chat_id: this.telegramChatId,
@@ -155,10 +153,7 @@ class Monitor {
       `🧠 Détection JS réelle (Playwright)\n\n` +
       `📍 Zones surveillées:\n` +
       config.urls
-        .map(
-          (u, i) =>
-            `${i + 1}. ${u.name} (≥${u.threshold ?? 1})`
-        )
+        .map((u, i) => `${i + 1}. ${u.name} (≥${u.threshold ?? 1})`)
         .join('\n')
     );
   }
@@ -166,7 +161,6 @@ class Monitor {
   /* ===========================
      MAIN
   =========================== */
-
   async runMonitoring() {
     this.log('█'.repeat(50));
     this.log('🏠 MONITORING QUINTOANDAR');
@@ -174,7 +168,7 @@ class Monitor {
 
     for (const u of config.urls) {
       await this.checkUrl(u);
-      await this.sleep(1500);
+      await this.sleep(5000 + Math.random() * 5000); // pause aléatoire entre URL
     }
 
     this.log('✅ Fin monitoring');
