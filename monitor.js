@@ -67,7 +67,6 @@ class Monitor {
   async loadPage(page, url) {
     this.log(`➡️ Chargement ${url}`);
 
-    // ⚠️ IMPORTANT : ne PAS attendre networkidle
     await page.goto(url, {
       waitUntil: 'domcontentloaded',
       timeout: 60000
@@ -78,7 +77,7 @@ class Monitor {
   }
 
   /* ===========================
-     SUPPLY EXTRACTION (JS REAL)
+     SUPPLY EXTRACTION (JS RÉEL)
   =========================== */
 
   async extractSupply(page) {
@@ -107,7 +106,9 @@ class Monitor {
      CHECK URL
   =========================== */
 
-  async checkUrl({ name, url }) {
+  async checkUrl(urlConfig) {
+    const { name, url, threshold = 1 } = urlConfig;
+
     this.log(`\n🔍 ${name}`);
 
     try {
@@ -116,17 +117,18 @@ class Monitor {
         return await this.extractSupply(page);
       });
 
-      this.log(`📊 Annonces détectées : ${result.value}`);
+      this.log(`📊 Annonces détectées : ${result.value} (seuil ≥${threshold})`);
 
-      if (result.value >= 1) {
+      if (result.value >= threshold) {
         await this.sendTelegram(
           `🚨 <b>Alerte logement</b>\n\n` +
           `📍 <b>${name}</b>\n` +
-          `📊 Annonces : <b>${result.value}</b>\n\n` +
+          `📊 Annonces : <b>${result.value}</b>\n` +
+          `⚠️ Seuil : ≥${threshold}\n\n` +
           `🔗 <a href="${url}">Voir</a>`
         );
       } else {
-        this.log('ℹ️ Aucune annonce');
+        this.log('ℹ️ Seuil non atteint');
       }
 
     } catch (err) {
@@ -150,10 +152,14 @@ class Monitor {
   async sendStartup() {
     await this.sendTelegram(
       `🚀 <b>Monitor démarré</b>\n\n` +
-      `🧠 Détection JS réelle\n` +
-      `🎯 Alerte dès <b>1 annonce</b>\n\n` +
+      `🧠 Détection JS réelle (Playwright)\n\n` +
       `📍 Zones surveillées:\n` +
-      config.urls.map((u, i) => `${i + 1}. ${u.name}`).join('\n')
+      config.urls
+        .map(
+          (u, i) =>
+            `${i + 1}. ${u.name} (≥${u.threshold ?? 1})`
+        )
+        .join('\n')
     );
   }
 
