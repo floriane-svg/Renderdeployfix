@@ -62,10 +62,21 @@ class Monitor {
     this.log(`➡️ Chargement ${url}`);
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
-      // Attendre que le wrapper soit attaché au DOM
-      await page.waitForSelector('div.HouseType_wrapper_74jms', { timeout: 30000, state: 'attached' });
-      // Petite pause pour laisser React injecter le <span>
-      await page.waitForTimeout(2000);
+
+      // Attendre spécifiquement le <span> numérique sous CONTEXTUAL_SEARCH_TITLE
+      await page.waitForFunction(() => {
+        const container = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
+        if (!container) return false;
+
+        // Priorité: <p><span>NUM</span></p> (cas avec annonces)
+        const pSpan = container.querySelector('p span');
+        if (pSpan && /\d+/.test(pSpan.textContent)) return true;
+
+        // Fallback: tout <span> numérique sous le container
+        const numericSpan = Array.from(container.querySelectorAll('span'))
+          .find(s => /\d+/.test(s.textContent));
+        return !!numericSpan;
+      }, { timeout: 30000 });
     } catch (err) {
       this.log(`⚠️ Skip ${url} après timeout ou erreur: ${err.message}`, 'warn');
     }
@@ -74,19 +85,25 @@ class Monitor {
   async extractSupply(page) {
     try {
       return await page.evaluate(() => {
-        const wrapper = document.querySelector('div.HouseType_wrapper_74jms');
-        if (!wrapper) return { value: 0, occurrences: 0 };
+        const container = document.querySelector('div[data-testid="CONTEXTUAL_SEARCH_TITLE"]');
+        if (!container) return { value: 0, occurrences: 0 };
 
-        // Cherche un <p><span> numérique
-        const pSpan = wrapper.querySelector('p span');
+        // 1) Chercher le <p><span>NUM</span></p>
+        const pSpan = container.querySelector('p span');
         if (pSpan) {
-          const number = parseInt(pSpan.textContent.trim(), 10);
-          if (!isNaN(number)) {
-            return { value: number, occurrences: 1 };
-          }
+          const num = parseInt(pSpan.textContent.trim(), 10);
+          if (!isNaN(num)) return { value: num, occurrences: 1 };
         }
 
-        // Sinon, cas <h1><span>Imóveis</span> → aucune annonce
+        // 2) Fallback: tout <span> numérique sous le container
+        const anyNumericSpan = Array.from(container.querySelectorAll('span'))
+          .map(s => parseInt(s.textContent.trim(), 10))
+          .find(n => !isNaN(n));
+        if (typeof anyNumericSpan === 'number') {
+          return { value: anyNumericSpan, occurrences: 1 };
+        }
+
+        // 3) Cas "Imóveis" ou aucun nombre → 0
         return { value: 0, occurrences: 0 };
       });
     } catch {
